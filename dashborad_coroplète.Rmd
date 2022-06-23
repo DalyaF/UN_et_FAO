@@ -1,0 +1,337 @@
+---
+title: "Distribution de la population et de la production de nourriture par pays en 2020 et de l'énergie en 2015"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+library(flexdashboard)
+library(tidyverse)
+library(readxl)
+library(tidyselect)
+library(countrycode)
+library(ggthemes)
+library(gapminder)
+```
+
+
+-------------------------------------
+
+# Population
+
+### Distribution de la population par pays en 2020
+
+```{r fig.width=8}
+
+population<-read_excel("WPP2019_POP_F01_1_TOTAL_POPULATION_BOTH_SEXES_UN.xlsx", skip = 16, na="...") |>
+  select(1:3, Type,"1950":"2020" )  |>
+  pivot_longer(cols=5:75,
+               names_to ="annee",
+               values_to = "population") |>
+  mutate(population=population*1000) |>
+  rename(region=3)
+
+population_country<-population |>
+  select(annee, population, region) |>
+   mutate(country=countrycode(region, origin = "country.name", destination = "country.name")) |> 
+  drop_na(country) |> 
+  mutate(annee=(as.numeric(annee))) |> 
+  filter(annee == 2020) 
+
+
+#la carte 
+world_map <- map_data("world") |> 
+  mutate(country=countrycode(region, origin = "country.name", destination = "country.name"))
+
+#fusionner les données lat/long avec les données gapminder
+
+population_carte <- world_map |>
+  mutate(group=factor(group),
+         region=factor(region)) |> 
+  full_join(population_country,by="country") 
+
+test_population <- population_country |> 
+  distinct(country)
+
+# carte choroplethe
+
+ggplot(population_carte)+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=population),colour="black")
+
+#de nombreux pays ne s'affichent pas, car ils ne sont pas écrits pareil
+
+pays_population_carte <- population_carte |> 
+  distinct(region.y)
+
+pays_worldmap <- world_map |> 
+  select(region) |> 
+  distinct(region)
+
+# on extrait la liste des pays présents dans pays_population_carte et absents dans world_map
+
+pays_absents_worldmap <- anti_join(pays_population_carte,pays_worldmap,
+                          by=c("region.y"="region"))
+
+# on extrait la liste des pays dans world_map et absents dans gapminder
+
+pays_absents_pays_population_carte <- anti_join(pays_worldmap,pays_population_carte,
+                          by=c("region"="region.y"))
+```
+
+
+-----------------------------------------------------------------------
+
+# NOURRITURE
+
+### Chart Distribution de la production de nourriture par pays en 2020
+
+```{r fig.width=8 }
+
+#Partie food
+food<-read_delim("Production_Crops_Livestock_E_All_Data.csv",
+                 locale=locale(encoding="ISO-8859-1")) |> 
+  select(-ends_with("F")) |> 
+  pivot_longer(cols=Y1961:Y2020,
+               names_to="annee",
+               values_to="Production_nourriture") |> 
+  mutate(annee=parse_number(annee)) |> 
+  filter(annee ==2020)
+
+
+food_country <-food |> 
+  filter(Element=="Production") |> 
+  filter(str_detect(Item,"Total")|str_detect(Item,"Primary")) |> 
+  rename(country=Area) |> 
+  rename(Area_code="Area Code")  |> 
+  mutate(Area_code=(as.factor(Area_code))) |> 
+  mutate(Area_code=countrycode(country, origin = "country.name", destination = "iso3c")) |> 
+  drop_na(Area_code) |> 
+  mutate(country=countrycode(Area_code, origin = "iso3c", destination = "country.name")) 
+
+test_food_country <- food_country |> 
+  distinct(country)
+
+
+#fusionner les données lat/long avec les données gapminder
+
+food_carte <- world_map |>
+  mutate(group=factor(group),
+         region=factor(region)) |> 
+  full_join(food_country,by="country")
+
+# carte choroplethe
+
+ggplot(food_carte)+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=Production_nourriture),colour="black")
+
+```
+
+
+-----------------------------------------------------------------------
+
+Column
+
+# Energie par types
+### Distribution de l'energie de type low_carbon_consumption par pays en 2015
+
+```{r }
+#Partie Energie
+
+#la carte 
+world_map <- map_data("world") |> 
+  mutate(country=countrycode(region, origin = "country.name", destination = "country.name")) 
+
+energy<-read_delim("owid-energy-data__OWID.csv")
+
+seqTp_energy <- energy |> 
+  select(1:3,contains("consumption")) |>
+  filter(year >= 1961 & year <= 2020) |> 
+  pivot_longer(cols=4:16,
+               names_to="type_energie",
+               values_to="consommation") |> 
+  mutate(types = case_when(str_detect(type_energie,"coal|gas|oil")~"fossil_fuel_consumption",
+                                 str_detect(type_energie,"nuclear|biofuel|hydro|other_renewable|solar|wind")~"low_carbon_consumption",
+                           TRUE~NA_character_)) |> 
+   mutate(sources_energy = case_when(str_detect(type_energie,"biofuel")~"biofuel",
+                                      str_detect(type_energie,"coal")~"coal",
+                                      str_detect(type_energie,"wind")~"wind",
+                                      str_detect(type_energie,"gas")~"gas",
+                                      str_detect(type_energie,"hydro")~"hydro",
+                                      str_detect(type_energie,"solar")~"solar",
+                                    str_detect(type_energie,"nuclear")~"nuclear",
+                                    str_detect(type_energie,"oil")~"oil",
+                                    str_detect(type_energie,"other_renewable")~"other_renewable_consumption"
+                                    )) 
+energy_country<- seqTp_energy |>
+  rename(annee="year") |> 
+  mutate(annee=(as.numeric(annee))) |> 
+  drop_na(types)|> 
+  mutate(iso_code=countrycode(country, origin = "country.name", destination = "iso3c")) |> 
+  drop_na(iso_code) |> 
+  mutate(country=countrycode(iso_code, origin = "iso3c", destination = "country.name")) 
+
+  
+test_energy_country <- energy_country |> 
+  distinct(country)
+
+#fusionner les données lat/long avec les données gapminder
+
+energy_carte <- world_map |>
+  mutate(group=factor(group),
+         region=factor(region)) |> 
+  full_join(energy_country,by="country")
+
+# carte choroplethe
+
+#type = low_carbon_consumption
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(types =="low_carbon_consumption"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+
+
+```
+
+
+### Distribution de l'énergie de type fossil_fuel par pays en 2015
+
+```{r}
+#type = fossil_fuel_consumption
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(types =="fossil_fuel_consumption"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+
+```
+
+
+
+
+
+# Energie par sources 1
+
+Column
+-----------------------------------------------------------------------
+
+### Distribution de l'énergie d'origine biofuel par pays en 2015
+
+```{r}
+
+#source = biofuel
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(sources_energy =="biofuel"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+
+```
+
+### Distribution de l'énergie d'origine charbone par pays en 2015
+
+```{r}
+
+#source = coal
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(sources_energy =="coal"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+```
+
+Column 
+------------------------------------------------------
+
+### Distribution de l'énergie d'origine gaz par pays en 2015
+
+```{r}
+#source = gas
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(sources_energy =="gas"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+```
+
+
+### Distribution de l'énergie d'origine hydro par pays en 2015
+
+```{r}
+#source = hydro
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(sources_energy =="hydro"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+```
+
+
+
+
+# Energie par sources 2
+
+Column
+-----------------------------------------------------------------------
+
+### Distribution de l'énergie d'origine nuclear par pays en 2015
+
+
+```{r}
+#source = nuclear
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(sources_energy =="nuclear"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+```
+
+### Distribution de l'énergie d'origine oil par pays en 2015
+
+```{r}
+#source = 	oil
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(sources_energy =="oil"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+```
+
+### Distribution de l'énergie de source solar par pays en 2015
+
+```{r}
+#source = 	solar
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(sources_energy =="solar"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+```
+
+### Distribution de l'énergie de source wind par pays en 2015
+
+```{r}
+#source = 		wind
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(sources_energy =="wind"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+```
+
+### Distribution de l'énergie de source other_renewable_consumption par pays en 2015
+
+```{r}
+#source = other_renewable_consumption
+ggplot(energy_carte |> 
+         filter(annee==2015) |> 
+         filter(sources_energy =="other_renewable_consumption"))+
+  aes(long,lat,group=group)+
+  geom_polygon(aes(fill=consommation),colour="black")
+```
